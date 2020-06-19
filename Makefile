@@ -3,6 +3,12 @@ MAKEFLAGS += --no-builtin-rules
 
 .SUFFIXES:
 
-.PHONY: example
-example:
-	go run . example.star
+EXAMPLES := $(wildcard examples/*)
+
+.PHONY: help
+help:
+	@echo targets: $(EXAMPLES)
+
+.PHONY: $(EXAMPLES)
+$(EXAMPLES):
+	go run . $@
