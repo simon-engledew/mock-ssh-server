@@ -17,4 +17,32 @@ mock-ssh-server currently exposes four built-in functions to the script:
 | readline(string) | Read a whole line from the client |
 | expect(string: regexp) | Keep reading until the input matches a pattern, return the match and any capturing groups |
 
-See `example.star` for a simple script.
+Simple example at `example.star`:
+
+```Starlark
+def run():
+    for n in range(100):
+        writeline("what is your name?")
+        name = readline()
+        writeline()
+        writeline("hello " + name)
+        writeline("enter a number:")
+        [number] = expect(r"\d")
+        writeline()
+        writeline("hello " + number + ". again? [y/n]")
+
+        [more] = expect(r"[yn]")
+        if more == "n":
+            break
+
+run()
+```
+
+Try it out with:
+
+```bash
+go get -u github.com/simon-engledew/mock-ssh-server
+
+mock-ssh-server example.star 
+```
+
