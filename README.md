@@ -25,6 +25,8 @@ name = readline()
 writeline("Hello " + name + "!")
 ```
 
+<img width="632" alt="image" src="https://user-images.githubusercontent.com/14410/85181005-cfc98200-b27c-11ea-9b46-c45042324570.png">
+
 Try it out with:
 
 ```bash
