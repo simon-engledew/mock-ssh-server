@@ -55,7 +55,7 @@ func (t *Text) Backspace() error {
 	if _, err := io.WriteString(t.writer, "\b \b"); err != nil {
 		return err
 	}
-	newSize := t.buffer.Len() - 2
+	newSize := t.buffer.Len() - 1
 	if newSize < 0 {
 		newSize = 0
 	}
@@ -71,15 +71,21 @@ func (t *Text) Clear() error {
 	return nil
 }
 
-func processCharacters(thread *starlark.Thread, stopPredicate func(text *Text, next byte) bool) (string, error) {
+// dropCR drops a terminal \r from the data.
+// see bufio/scan.go
+func dropCR(data []byte) []byte {
+	if len(data) > 0 && data[len(data)-1] == '\r' {
+		return data[0 : len(data)-1]
+	}
+	return data
+}
+
+func processCharacters(w io.Writer, r io.Reader, predicate stopPredicate) (string, error) {
 	buffer := getBuffer()
 	defer putBuffer(buffer)
 
 	peek := getPeek()
 	defer putPeek(peek)
-
-	r := thread.Local("reader").(io.Reader)
-	w := thread.Local("writer").(io.Writer)
 
 	text := &Text{
 		buffer: buffer,
@@ -87,6 +93,7 @@ func processCharacters(thread *starlark.Thread, stopPredicate func(text *Text, n
 	}
 
 	var err error
+	var stop bool
 
 	for {
 		_, err = r.Read(peek)
@@ -94,21 +101,78 @@ func processCharacters(thread *starlark.Thread, stopPredicate func(text *Text, n
 			break
 		}
 
+		// handle CTRL-D
+		if peek[0] == '\x04' {
+			err = io.EOF
+			break
+		}
+
 		// handle backspace
 		if peek[0] == '\x7f' {
-			text.Backspace()
+			if err = text.Backspace(); err != nil {
+				break
+			}
+			continue
+		}
+
+		if stop, err = predicate(text, peek[0]); stop || err != nil {
+			break
 		}
 
 		if err := buffer.WriteByte(peek[0]); err != nil {
 			return "", err
 		}
-
-		if stopPredicate(text, peek[0]) {
-			break
-		}
 	}
 
-	return buffer.String(), err
+	return string(dropCR(buffer.Bytes())), err
+}
+
+type stopPredicate func(text *Text, next byte) (bool, error)
+
+func isNewline(text *Text, next byte) (bool, error) {
+	return next == 13, nil
+}
+
+func isPattern(expr *regexp.Regexp) stopPredicate {
+	return func(text *Text, next byte) (bool, error) {
+		return expr.Match(append(text.Bytes(), next)), nil
+	}
+}
+
+func clearLine(done bool) stopPredicate {
+	return func(text *Text, next byte) (bool, error) {
+		return done, text.Clear()
+	}
+}
+
+func whileStop(predicates ...stopPredicate) stopPredicate {
+	return func(text *Text, next byte) (bool, error) {
+		for _, predicate := range predicates {
+			stop, err := predicate(text, next)
+			if err != nil {
+				return stop, err
+			}
+			if !stop {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+}
+
+func untilStop(predicates ...stopPredicate) stopPredicate {
+	return func(text *Text, next byte) (bool, error) {
+		for _, predicate := range predicates {
+			stop, err := predicate(text, next)
+			if err != nil {
+				return stop, err
+			}
+			if stop {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 }
 
 func matchline(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -123,16 +187,10 @@ func matchline(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple
 		return nil, err
 	}
 
-	found, err := processCharacters(thread, func(text *Text, next byte) bool {
-		if next == 13 {
-			if pattern.Match(text.Bytes()) {
-				return true
-			} else {
-				text.Clear()
-			}
-		}
-		return false
-	})
+	r := thread.Local("reader").(io.Reader)
+	w := thread.Local("writer").(io.Writer)
+
+	found, err := processCharacters(w, r, whileStop(isNewline, untilStop(isPattern(pattern), clearLine(false))))
 	if err != nil {
 		return nil, err
 	}
@@ -145,22 +203,19 @@ func matchline(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple
 		output[n] = starlark.String(match)
 	}
 
-	w := thread.Local("writer").(io.Writer)
-
 	_, err = fmt.Fprint(w, "\r\n")
 
 	return starlark.NewList(output), err
 }
 
 func readline(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	found, err := processCharacters(thread, func(text *Text, next byte) bool {
-		return next == 13
-	})
+	r := thread.Local("reader").(io.Reader)
+	w := thread.Local("writer").(io.Writer)
+
+	found, err := processCharacters(w, r, isNewline)
 	if err != nil {
 		return nil, err
 	}
-
-	w := thread.Local("writer").(io.Writer)
 
 	_, err = fmt.Fprint(w, "\r\n")
 

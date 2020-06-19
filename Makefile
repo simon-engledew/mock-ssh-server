@@ -12,3 +12,7 @@ help:
 .PHONY: $(EXAMPLES)
 $(EXAMPLES):
 	go run . $@
+
+.PHONY: test
+test:
+	go test ./pkg
