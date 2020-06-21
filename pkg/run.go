@@ -5,19 +5,26 @@ import (
 	"io"
 )
 
-var predeclared = make(map[string]starlark.Value)
+var predeclared starlark.StringDict = make(map[string]starlark.Value)
 
 func register(builtin *starlark.Builtin) {
 	predeclared[builtin.Name()] = builtin
 }
 
-func RunScript(script string, w io.Writer, r io.Reader) error {
-	echoReader := io.TeeReader(r, w)
+func Load(filename string, src interface{}) (func(w io.Writer, r io.Reader) error, error) {
+	_, mod, err := starlark.SourceProgram(filename, src, predeclared.Has)
+	if err != nil {
+		return nil, err
+	}
 
-	thread := &starlark.Thread{Name: "SSH Session"}
-	thread.SetLocal("reader", echoReader)
-	thread.SetLocal("writer", w)
+	return func(w io.Writer, r io.Reader) error {
+		echoReader := io.TeeReader(r, w)
 
-	_, err := starlark.ExecFile(thread, script, nil, predeclared)
-	return err
+		thread := &starlark.Thread{Name: filename}
+		thread.SetLocal("reader", echoReader)
+		thread.SetLocal("writer", w)
+
+		_, err := mod.Init(thread, predeclared)
+		return err
+	}, nil
 }

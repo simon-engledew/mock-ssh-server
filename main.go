@@ -3,21 +3,10 @@ import (
 	"fmt"
 	"github.com/gliderlabs/ssh"
 	"github.com/simon-engledew/mock-ssh-server/pkg"
-	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/unicode"
-	"io"
 	"log"
 	"os"
 )
-
-type Script func(w io.Writer, r io.Reader)
-
-func Actor(script Script, enc encoding.Encoding) ssh.Handler {
-	return func(s ssh.Session) {
-		log.Print("client connected: ", s.RemoteAddr())
-		script(enc.NewEncoder().Writer(s), enc.NewDecoder().Reader(s))
-	}
-}
 
 func main() {
 	log.SetFlags(0)
@@ -26,15 +15,27 @@ func main() {
 		log.Fatal("usage: gosshim <script.star>")
 	}
 
-	script := os.Args[1]
+	script, err := pkg.Load(os.Args[1], nil)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	ssh.Handle(Actor(func(w io.Writer, r io.Reader) {
-		err := pkg.RunScript(script, w, r)
+	encoding := unicode.UTF8
+
+	ssh.Handle(func(s ssh.Session) {
+		log.Print("client connected: ", s.RemoteAddr())
+
+		w := encoding.NewEncoder().Writer(s)
+		r := encoding.NewDecoder().Reader(s)
+
+		err := script(w, r)
 		if err != nil {
-			fmt.Fprint(w, err.Error()+"\r\n")
+			if _, fmtErr := fmt.Fprint(w, err.Error()+"\r\n"); fmtErr != nil {
+				log.Print(err)
+			}
 			log.Print(err)
 		}
-	}, unicode.UTF8))
+	})
 
 	log.Fatal(ssh.ListenAndServe(":2222", nil))
 }
